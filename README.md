@@ -10,6 +10,36 @@
 >
 > **⚠️ AUTHORIZED SECURITY TESTING ONLY — see [DISCLAIMER.md](DISCLAIMER.md).**
 
+## What's in this repo
+
+This fork merges two projects onto one MCP server, keeping both intact:
+
+- **`lib/`, `kb/`, `templates/`, `docker/`, `skill/`, `install.sh`, `tests/`**
+  — upstream [sapper-v2](https://github.com/N1nEmAn/sapper-v2), verbatim.
+  The `sapper` CLI behaves exactly as documented below; nothing was
+  rewritten.
+- **`linuxmcp/`** — the LinuxMCP system/desktop control package, vendored
+  as-is (shell + PTY sessions, filesystem, processes, services, journald,
+  packages, settings, screenshots, input, clipboard — 91 tools).
+- **`sappermcp/`** — the new integration layer (this work):
+  - `server.py` — one FastMCP instance registering both toolsets
+    (127 tools), stdio + streamable-http transports, Bearer auth,
+    `/health`, `--no-linux`, `--list-tools`
+  - `tools/` — 36 `sapper_*` tools covering the entire CLI: graph CRUD
+    calls the `Store` API directly for structured JSON; agent/tmux
+    orchestrators run the real CLI in a subprocess; long runs accept
+    `background=True` to execute inside a LinuxMCP PTY session
+  - `core/` — toolkit locator (`SAPPER_ROOT`), lazy module loaders, the
+    subprocess/PTY runner, and a markdown engagement-report builder
+- **`deploy/sappermcp.service`**, **`examples/`** client configs,
+  **`tests/smoke_test_mcp.py`** (26-check end-to-end suite), plus this
+  documentation.
+
+The MCP integration layer was designed and implemented with
+[Devin](https://devin.ai). Upstream sapper-v2 remains © N1nEmAn /
+VarFusion Lab under MIT (see below); LinuxMCP and the `sappermcp`
+package are MIT as well.
+
 ## Requirements
 
 - **Linux** (the sapper graph uses `fcntl`; tmux features need `tmux`).
