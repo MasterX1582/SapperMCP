@@ -90,4 +90,9 @@ and you can drive it with `sapper dispatch reason` / `sapper auto`.
 To opt a project OUT:
   cd <project> && sapper teardown           # removes hooks + AGENTS.md (keeps .sapper/)
   cd <project> && sapper teardown --purge   # also deletes the graph data
+
+MCP server (this fork): control the whole toolkit + the Linux box over MCP —
+  python3 -m venv .venv && .venv/bin/pip install -e .
+  SAPPER_ROOT=$PWD .venv/bin/sappermcp --http --port 3940
+See the "SapperMCP" section of README.md for client configs and workflows.
 NOTE

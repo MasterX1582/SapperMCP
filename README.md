@@ -4,27 +4,147 @@
 > toolkit — fact-intent graph, flag ledger, arena bridge, knowledge base,
 > agent dispatch/auto loops, tmux peers, fleet/command/sweep/bench
 > orchestrators, **and all reporting** — is exposed as `sapper_*` MCP tools,
-> alongside the complete [LinuxMCP](https://github.com/) system/desktop
-> control toolset (vendored under `linuxmcp/`). One server, full control:
-> debug applications and harden their security without leaving your MCP
-> client.
+> alongside the complete LinuxMCP system/desktop control toolset (vendored
+> under `linuxmcp/`). One server, full control: debug applications and harden
+> their security without leaving your MCP client.
 >
 > **⚠️ AUTHORIZED SECURITY TESTING ONLY — see [DISCLAIMER.md](DISCLAIMER.md).**
 
-## Quick start (the MCP server)
+## Requirements
+
+- **Linux** (the sapper graph uses `fcntl`; tmux features need `tmux`).
+  Developed on Windows + WSL — run the server inside WSL/Linux, point your
+  MCP client at it from anywhere.
+- Python **3.10+**; deps: `fastmcp`, `psutil`, `mss`, `Pillow`.
+- Agent-driven commands (`dispatch`, `auto`, `command`, `sweep`, `bench`)
+  additionally need an agent CLI on the host (Claude Code / Codex / …) and
+  `$SAPPER_MODEL` configured — same requirements as `sapper` itself.
+
+## Install & run
+
+From this checkout (no install — good for trying it):
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e .   # fastmcp + deps
-.venv/bin/sappermcp --http --port 3940                # streamable-http
-# or: .venv/bin/sappermcp --stdio                     # stdio transport
-# or: .venv/bin/python -m sappermcp --list-tools      # inspect the registry
+python3 -m venv .venv && .venv/bin/pip install fastmcp psutil mss pillow
+PYTHONPATH=. .venv/bin/python -m sappermcp --http --port 3940
 ```
 
-Client configs: [examples/windsurf-http.json](examples/windsurf-http.json),
-[examples/claude-desktop-stdio.json](examples/claude-desktop-stdio.json).
-systemd unit: [deploy/sappermcp.service](deploy/sappermcp.service).
-Auth: `--auth-token` / `SAPPERMCP_AUTH_TOKEN` (Bearer). Run `sappermcp
---no-linux` to expose only the sapper tools.
+As a package (installs the `sappermcp` entry point; keep `SAPPER_ROOT`
+pointed at this checkout so the tools find `lib/`):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e .
+SAPPER_ROOT=$PWD .venv/bin/sappermcp --http --port 3940
+```
+
+As a service: adapt [deploy/sappermcp.service](deploy/sappermcp.service)
+(`systemd --user` or system unit; set `SAPPER_ROOT`, `PYTHONPATH`, and
+`SAPPERMCP_AUTH_TOKEN` via an `EnvironmentFile`).
+
+### Transports & flags
+
+```bash
+sappermcp --stdio                      # stdio (default; for local clients)
+sappermcp --http --host 0.0.0.0 --port 3940        # streamable-http
+sappermcp --http --auth-token <tok>    # Bearer auth (or SAPPERMCP_AUTH_TOKEN)
+sappermcp --no-linux                   # only the 36 sapper_* tools
+sappermcp --list-tools                 # print the registry (127 tools)
+```
+
+### Client configuration
+
+Windsurf / any HTTP client ([examples/windsurf-http.json](examples/windsurf-http.json)):
+
+```json
+{ "mcpServers": { "sappermcp": {
+  "serverUrl": "http://127.0.0.1:3940/mcp",
+  "headers": { "Authorization": "Bearer <token>" } } } }
+```
+
+Claude Desktop / stdio ([examples/claude-desktop-stdio.json](examples/claude-desktop-stdio.json)):
+
+```json
+{ "mcpServers": { "sappermcp": {
+  "command": "/path/to/.venv/bin/sappermcp", "args": ["--stdio"],
+  "env": { "SAPPER_ROOT": "/path/to/SapperMCP" } } } }
+```
+
+### Environment variables
+
+| Var | Purpose |
+|---|---|
+| `SAPPER_ROOT` | path to this checkout (locates `lib/sapper.py` for the tools) |
+| `SAPPERMCP_AUTH_TOKEN` | Bearer token for `--http` |
+| `SAPPER_MODEL` / `SAPPER_TIMEOUT` | agent model / per-call timeout for dispatch loops |
+| `SAPPER_KB_ROOT` | override the knowledge-base directory |
+| `BENCHMARK_BASE_URL` / `BENCHMARK_TOKEN` | arena platform (hosted mode injects these; or use `sapper_arena init` → `.sapper/arena.json`) |
+| `LINUXMCP_SUDO_PASSWORD` | enables `sudo` for privileged linuxmcp calls |
+| `SAPPERMCP_DISPLAY` / `SAPPERMCP_XAUTHORITY` | reach the X session for desktop tools from SSH/systemd |
+
+## Using it
+
+Every graph tool takes `store` — the path to a `.sapper/` directory
+(default `.sapper` relative to the server cwd). All tools return JSON with
+an `"ok"` flag; errors come back as `{"ok": false, "error": ...}`.
+
+### Flow 1 — assisted audit / debugging (you drive, MCP records)
+
+Best for app debugging and hardening: your assistant runs commands via the
+LinuxMCP toolset and records every confirmed finding in the graph.
+
+```text
+sapper_init      store=/proj/app/.sapper  goal="audit web app for OWASP top-10"
+run_command      "nmap -sV localhost"                         (linuxmcp)
+sapper_fact      kind=service  data={port: 8080, svc: http}   description="..."
+sapper_fact      kind=vuln     title="reflected XSS"          doc="repro steps..."
+sapper_intent    from_ids=[f001]  description="test /api/users for IDOR"
+sapper_done      id=i001  fact="IDOR confirmed: uid param not checked"  kind=vuln
+sapper_flag      value="flag{...}"  challenge=c01   (if a flag drops)
+sapper_report    → writes sapper-report.md next to the graph
+```
+
+Because facts are typed (`host/service/cred/vuln/loot/flag/note`) and carry
+`data` fields, `sapper_report` turns them straight into a findings table.
+
+### Flow 2 — agent-driven engagement (sapper drives, you supervise)
+
+```text
+sapper_setup     project_dir=/proj/app  goal="..."   → graph + hooks + AGENTS.md
+sapper_dispatch  target=reason     → commander proposes next intents
+sapper_auto      background=true   → returns session_id immediately
+read_session_output  session_id=…  → watch it work (linuxmcp)
+write_to_session / close_shell_session  → steer / stop
+sapper_status / sapper_board       → progress at a glance
+sapper_report / sapper_view        → markdown report + interactive HTML graph
+```
+
+`background=True` is the key flag for long runs — the CLI executes inside a
+persistent PTY instead of blocking the MCP call. `exec_timeout` (default
+30 min for auto/orchestrators) caps synchronous runs.
+
+### Flow 3 — multi-challenge / competition
+
+```text
+sapper_arena     action=challenges          → list targets (needs arena config)
+sapper_arena     action=start challenge_id=…
+sapper_bench     cwd=/match  root=runs  minutes=480  background=true
+                 → per-challenge graphs under runs/<code>/.sapper
+sapper_command / sapper_sweep               → LLM or round-robin allocation
+sapper_board     root=runs                  → one line per challenge
+sapper_fleet     action=hire target=c01 minutes=30  → tmux worker per target
+sapper_peers     discover=true → authorize panes; then sapper_send / sapper_capture
+```
+
+### Reporting
+
+- `sapper_report` → standalone markdown report: summary, flag ledger,
+  findings grouped by kind, intent work-log, timeline, hints
+  (`include_docs=True` appends full node documents). Written to
+  `<store>/../sapper-report.md` or `out`.
+- `sapper_view` → self-contained interactive HTML snapshot of the graph
+  (`sapper-graph.html`); pass `return_html=True` to get it inline.
+- `sapper_board` → the commander's table across a `runs/` directory.
+- `sapper_status` / `sapper_graph` → text or structured dump anytime.
 
 ### Tool map (every `sapper` CLI function has an MCP equivalent)
 
