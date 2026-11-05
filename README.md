@@ -31,7 +31,13 @@ This fork merges two projects onto one MCP server, keeping both intact:
     `background=True` to execute inside a LinuxMCP PTY session
   - `core/` — toolkit locator (`SAPPER_ROOT`), lazy module loaders, the
     subprocess/PTY runner, and a markdown engagement-report builder
-- **`deploy/sappermcp.service`**, **`examples/`** client configs,
+  - `gui.py` — `sappermcp-gui`, a GTK control panel: a **Sapper** main tab
+    with a spec-driven builder for every CLI subcommand (project dir +
+    store pickers, per-command options, streamed output, killable runs,
+    quick actions for status/graph/board/view/report) plus the original
+    **Server** tab managing the merged daemon-supervised MCP server.
+- **`deploy/sappermcp.service`** + **`deploy/sappermcp.desktop`**,
+  **`examples/`** client configs,
   **`tests/smoke_test_mcp.py`** (26-check end-to-end suite), plus this
   documentation.
 
@@ -79,6 +85,9 @@ sappermcp --http --host 0.0.0.0 --port 3940        # streamable-http
 sappermcp --http --auth-token <tok>    # Bearer auth (or SAPPERMCP_AUTH_TOKEN)
 sappermcp --no-linux                   # only the 36 sapper_* tools
 sappermcp --list-tools                 # print the registry (127 tools)
+sappermcp-gui                          # GTK control panel (needs python3-gi):
+                                       #   Sapper tab = full CLI builder,
+                                       #   Server tab = daemon/server controls
 ```
 
 ### Client configuration

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SapperMCP Control
+Comment=Control panel for the merged Sapper + LinuxMCP server and the sapper CLI
+Exec=sappermcp-gui
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Network;Utility;
+Keywords=mcp;ai;debug;server;security;
+StartupNotify=true

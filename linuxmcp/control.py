@@ -11,7 +11,7 @@ import socket
 from pathlib import Path
 from typing import Any, Optional
 
-DEFAULT_PORT = 3939
+DEFAULT_PORT = 3940  # SapperMCP merged-server default (linuxmcp uses 3939)
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "port": DEFAULT_PORT,

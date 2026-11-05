@@ -21,8 +21,17 @@ server.
   wired in `tools/__init__.py:register_all`.
 - `sappermcp/server.py` — FastMCP assembly, stdio/http, bearer auth,
   /health + /, `--no-linux` for sapper-only, `--list-tools`.
+- `sappermcp/gui.py` — GTK control panel (`sappermcp-gui`). Subclasses
+  `linuxmcp.gui.LinuxMcpWindow`, reparents its controls into a Notebook:
+  page 1 "Sapper" = spec-driven builder for ALL sapper subcommands
+  (`COMMANDS` table = every CLI option), page 2 "Server" = the original
+  daemon/server panel. Stdlib + PyGObject only; its bootstrap re-execs
+  `-m sappermcp.gui` BEFORE linuxmcp.gui is imported (order matters —
+  linuxmcp's bootstrap would re-exec the wrong module).
 - `linuxmcp/` — vendored system/desktop toolset; treat as upstream, don't
-  edit casually (real upstream: the LinuxMCP repo).
+  edit casually (real upstream: the LinuxMCP repo). Deliberate local edits:
+  `daemon.py::_child_argv` spawns `-m sappermcp` (merged server, not
+  linuxmcp-only) and `control.py::DEFAULT_PORT` is 3940.
 
 ## Conventions
 - Same contract as LinuxMCP: tools return JSON strings, always `"ok"`.

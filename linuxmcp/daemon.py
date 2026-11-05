@@ -71,7 +71,9 @@ class LinuxMcpDaemon:
 
     def _child_argv(self) -> list[str]:
         cfg = self.cfg
-        argv = [sys.executable, "-m", "linuxmcp", "--http",
+        # SapperMCP: the daemon supervises the merged server (all 127 tools;
+        # the linuxmcp-only variant is `python -m linuxmcp`).
+        argv = [sys.executable, "-m", "sappermcp", "--http",
                 "--host", host_for(cfg), "--port", str(cfg["port"])]
         if cfg.get("auth_token"):
             argv += ["--auth-token", str(cfg["auth_token"])]

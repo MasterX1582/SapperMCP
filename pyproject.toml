@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 sappermcp = "sappermcp.server:main"
+sappermcp-gui = "sappermcp.gui:main"
 
 [tool.setuptools.packages.find]
 include = ["sappermcp*", "linuxmcp*"]
