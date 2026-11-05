@@ -34,7 +34,9 @@ server.
   linuxmcp-only), `daemon.py::SUDOERS_FILE` is `99-sappermcp`, and
   `control.py` uses the `sappermcp` namespace (config dir, state dir,
   `sappermcp.sock`, port 3940) so it does NOT fight a stock LinuxMCP
-  daemon over settings.
+  daemon over settings. `gui.py::refresh_all` guards control syncs with
+  `_dirty`/`_syncing` so the 2s refresh stops reverting un-Applied
+  user input (upstream bug: toggles flipped back before Apply).
 
 ## Conventions
 - Same contract as LinuxMCP: tools return JSON strings, always `"ok"`.

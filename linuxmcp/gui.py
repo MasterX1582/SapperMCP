@@ -82,6 +82,7 @@ class LinuxMcpWindow(Gtk.Window):
         self._daemon_up = False
         self._server_up = False
         self._tray = None
+        self._dirty = False  # user edited controls not yet Applied
 
         style = Gtk.CssProvider()
         style.load_from_data(CSS)
@@ -112,6 +113,7 @@ class LinuxMcpWindow(Gtk.Window):
         grid.attach(Gtk.Label(label="Port", xalign=0), 0, 0, 1, 1)
         self.port_spin = Gtk.SpinButton.new_with_range(1024, 65535, 1)
         self.port_spin.set_value(3939)
+        self.port_spin.connect("value-changed", self._mark_dirty)
         grid.attach(self.port_spin, 1, 0, 2, 1)
 
         grid.attach(Gtk.Label(label="Allow remote (LAN) connections",
@@ -125,6 +127,7 @@ class LinuxMcpWindow(Gtk.Window):
         self.token_entry = Gtk.Entry()
         self.token_entry.set_placeholder_text("empty = no auth")
         self.token_entry.set_visibility(True)
+        self.token_entry.connect("changed", self._mark_dirty)
         tok_box.pack_start(self.token_entry, True, True, 0)
         gen = Gtk.Button(label="Generate")
         gen.connect("clicked", lambda *_:
@@ -135,6 +138,7 @@ class LinuxMcpWindow(Gtk.Window):
         grid.attach(Gtk.Label(label="Start server with daemon",
                               xalign=0), 0, 3, 1, 1)
         self.autostart_switch = Gtk.Switch(halign=Gtk.Align.START)
+        self.autostart_switch.connect("notify::active", self._mark_dirty)
         grid.attach(self.autostart_switch, 1, 3, 1, 1)
 
         grid.attach(Gtk.Label(label="Passwordless sudo for this user",
@@ -237,7 +241,13 @@ class LinuxMcpWindow(Gtk.Window):
         self._cmd({"cmd": "shutdown"})
         self.refresh_all()
 
+    def _mark_dirty(self, *_a) -> None:
+        # programmatic syncs from refresh_all must not count as user edits
+        if not getattr(self, "_syncing", False):
+            self._dirty = True
+
     def _on_apply(self, *_a) -> None:
+        self._dirty = False
         token = self.token_entry.get_text().strip()
         self._cmd({"cmd": "set_config", "config": {
             "port": int(self.port_spin.get_value()),
@@ -316,10 +326,17 @@ class LinuxMcpWindow(Gtk.Window):
         else:
             self.url_label.set_text("server is stopped")
             self.net_label.set_text("")
-        # reflect config into controls (without clobbering token entry focus)
-        self.port_spin.set_value(port)
-        self.remote_switch.set_active(bool(remote))
-        self.autostart_switch.set_active(bool(cfg.get("autostart_server")))
+        # reflect config into controls (without clobbering user input that
+        # hasn't been Applied yet - SapperMCP: _dirty guard)
+        if not getattr(self, "_dirty", False):
+            self._syncing = True
+            try:
+                self.port_spin.set_value(port)
+                self.remote_switch.set_active(bool(remote))
+                self.autostart_switch.set_active(
+                    bool(cfg.get("autostart_server")))
+            finally:
+                self._syncing = False
         if cfg.get("auth_token") and not self.token_entry.has_focus():
             if not self.token_entry.get_text():
                 self.token_entry.set_placeholder_text(
