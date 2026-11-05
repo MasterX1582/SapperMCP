@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — install the `sapper` CLI + the `sapper-setup` project skill.
+# install.sh — SapperMCP installer: `sapper` CLI + project skill + the merged
+# MCP server (sappermcp / sappermcp-gui) in a repo-local .venv.
 #
 # This installer does NOT touch ~/.claude/settings.json and does NOT register
 # any global hooks. The fact-graph is strictly per-project opt-in: you opt a
@@ -7,14 +8,16 @@
 # project, which writes ./.claude/settings.json + .sapper/ there.
 #
 # Usage:
-#   bash install.sh              # install CLI + project skill (recommended)
-#   bash install.sh --cli-only   # just symlink sapper, skip the skill
-#   bash install.sh --uninstall  # remove the symlink + the skill
+#   bash install.sh              # install CLI + skill + MCP server (recommended)
+#   bash install.sh --cli-only   # just the sapper CLI + skill, skip the MCP parts
+#   bash install.sh --uninstall  # remove everything this script installed
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${SCRIPT_DIR}/lib/sapper.py"
+VENV="${SCRIPT_DIR}/.venv"
+BIN_DIR="${HOME}/.local/bin"
 mode="${1:-install}"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -22,13 +25,34 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+path_hint() {
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) echo "install: NOTE — $BIN_DIR is not on your PATH. Add:" >&2
+       echo "    export PATH=\"$BIN_DIR:\$PATH\"" >&2 ;;
+  esac
+}
+
 # --- uninstall -------------------------------------------------------------
 if [[ "$mode" == "--uninstall" ]]; then
-  rm -f "${HOME}/.local/bin/sapper"
-  echo "removed ~/.local/bin/sapper"
+  for link in sapper sappermcp sappermcp-gui; do
+    if [[ -L "$BIN_DIR/$link" || -e "$BIN_DIR/$link" ]]; then
+      rm -f "$BIN_DIR/$link"
+      echo "removed $BIN_DIR/$link"
+    fi
+  done
   if [[ -e "${HOME}/.claude/skills/sapper-setup" || -L "${HOME}/.claude/skills/sapper-setup" ]]; then
     rm -f "${HOME}/.claude/skills/sapper-setup"
     echo "removed ~/.claude/skills/sapper-setup"
+  fi
+  DESK="${HOME}/.local/share/applications/sappermcp.desktop"
+  if [[ -e "$DESK" ]]; then
+    rm -f "$DESK"
+    echo "removed $DESK"
+  fi
+  if [[ -d "$VENV" ]]; then
+    rm -rf "$VENV"
+    echo "removed $VENV"
   fi
   echo "uninstalled."
   echo "(Project-level .sapper/ graphs and ./.claude/settings.json in your projects are untouched."
@@ -36,34 +60,27 @@ if [[ "$mode" == "--uninstall" ]]; then
   exit 0
 fi
 
-# --- install CLI -----------------------------------------------------------
+# --- install the sapper CLI -------------------------------------------------
 if [[ ! -f "$SRC" ]]; then
   echo "install: sapper.py not found at $SRC" >&2; exit 1
 fi
 
-DEST_DIR="${HOME}/.local/bin"
-mkdir -p "$DEST_DIR"
-if [[ -e "$DEST_DIR/sapper" || -L "$DEST_DIR/sapper" ]]; then
-  rm -f "$DEST_DIR/sapper"
+mkdir -p "$BIN_DIR"
+if [[ -e "$BIN_DIR/sapper" || -L "$BIN_DIR/sapper" ]]; then
+  rm -f "$BIN_DIR/sapper"
 fi
-ln -s "$SRC" "$DEST_DIR/sapper"
+ln -s "$SRC" "$BIN_DIR/sapper"
 chmod +x "$SRC"
-echo "installed: sapper -> $DEST_DIR/sapper"
-
-case ":$PATH:" in
-  *":$DEST_DIR:"*) ;;
-  *) echo "install: NOTE — $DEST_DIR is not on your PATH. Add:" >&2
-     echo "    export PATH=\"$DEST_DIR:\$PATH\"" >&2 ;;
-esac
-
-"$DEST_DIR/sapper" --version >/dev/null && echo "  (sapper works)"
+echo "installed: sapper -> $BIN_DIR/sapper"
 
 if [[ "$mode" == "--cli-only" ]]; then
-  echo "(--cli-only: skipping the /sapper-setup skill)"
+  path_hint
+  "$BIN_DIR/sapper" --version >/dev/null && echo "  (sapper works)"
+  echo "(--cli-only: skipping the /sapper-setup skill and the MCP server)"
   exit 0
 fi
 
-# --- install the project skill --------------------------------------------
+# --- install the project skill ---------------------------------------------
 SKILLS_DIR="${HOME}/.claude/skills"
 mkdir -p "$SKILLS_DIR"
 SKILL_LINK="$SKILLS_DIR/sapper-setup"
@@ -72,6 +89,71 @@ if [[ -e "$SKILL_LINK" || -L "$SKILL_LINK" ]]; then
 fi
 ln -s "${SCRIPT_DIR}/skill" "$SKILL_LINK"
 echo "installed: /sapper-setup skill -> $SKILL_LINK"
+
+# --- install the MCP server (venv + package) --------------------------------
+mcp_ok=1
+if [[ ! -x "$VENV/bin/python" ]]; then
+  echo "creating venv at $VENV ..."
+  if ! python3 -m venv "$VENV"; then
+    mcp_ok=0
+    echo "install: WARNING — could not create a venv. On Debian/Ubuntu:" >&2
+    echo "    sudo apt install python3-venv" >&2
+    echo "  then re-run: bash install.sh" >&2
+  fi
+fi
+
+if [[ "$mcp_ok" == 1 ]]; then
+  echo "installing sappermcp (editable) into the venv ..."
+  if "$VENV/bin/pip" install -q --upgrade pip && \
+     "$VENV/bin/pip" install -q -e "$SCRIPT_DIR"; then
+    for entry in sappermcp sappermcp-gui; do
+      if [[ -e "$BIN_DIR/$entry" || -L "$BIN_DIR/$entry" ]]; then
+        rm -f "$BIN_DIR/$entry"
+      fi
+      ln -s "$VENV/bin/$entry" "$BIN_DIR/$entry"
+      echo "installed: $entry -> $BIN_DIR/$entry"
+    done
+  else
+    mcp_ok=0
+    echo "install: WARNING — pip install failed (offline?). Retry manually:" >&2
+    echo "    $VENV/bin/pip install -e $SCRIPT_DIR" >&2
+  fi
+fi
+
+# --- GTK check for the GUI ---------------------------------------------------
+if [[ "$mcp_ok" == 1 ]]; then
+  if /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0")' \
+      >/dev/null 2>&1; then
+    echo "gtk3: ok (sappermcp-gui will run)"
+  else
+    echo "install: NOTE — sappermcp-gui needs PyGObject + GTK3:" >&2
+    echo "    sudo apt install python3-gi gir1.2-gtk-3.0" >&2
+    echo "  (the CLI and MCP server work without it)" >&2
+  fi
+
+  # --- desktop launcher -----------------------------------------------------
+  APPS_DIR="${HOME}/.local/share/applications"
+  mkdir -p "$APPS_DIR"
+  cat > "${APPS_DIR}/sappermcp.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=SapperMCP Control
+Comment=Control panel for the merged Sapper + LinuxMCP server and the sapper CLI
+Exec=${VENV}/bin/sappermcp-gui
+Path=${SCRIPT_DIR}
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Network;Utility;
+Keywords=mcp;ai;debug;server;security;
+StartupNotify=true
+DESK
+  echo "installed: desktop launcher -> ${APPS_DIR}/sappermcp.desktop"
+  command -v update-desktop-database >/dev/null 2>&1 && \
+    update-desktop-database "$APPS_DIR" 2>/dev/null || true
+fi
+
+path_hint
+"$BIN_DIR/sapper" --version >/dev/null && echo "  (sapper works)"
 
 cat <<'NOTE'
 
@@ -91,8 +173,9 @@ To opt a project OUT:
   cd <project> && sapper teardown           # removes hooks + AGENTS.md (keeps .sapper/)
   cd <project> && sapper teardown --purge   # also deletes the graph data
 
-MCP server (this fork): control the whole toolkit + the Linux box over MCP —
-  python3 -m venv .venv && .venv/bin/pip install -e .
-  SAPPER_ROOT=$PWD .venv/bin/sappermcp --http --port 3940
+MCP server (installed into .venv in this repo):
+  sappermcp --http --port 3940   # merged server: all sapper_* + linuxmcp tools
+  sappermcp --stdio              # stdio transport for local clients
+  sappermcp-gui                  # control panel: Sapper builder + server tabs
 See the "SapperMCP" section of README.md for client configs and workflows.
 NOTE

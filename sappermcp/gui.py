@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -377,9 +378,12 @@ class SapperMcpWindow(LinuxMcpWindow):
         self.remove(server_page)
 
         self._proc = None
+        self._sessions_timer = None
         nb = Gtk.Notebook()
         nb.append_page(self._build_sapper_page(),
                        Gtk.Label(label="Sapper"))
+        nb.append_page(self._build_sessions_page(),
+                       Gtk.Label(label="Sessions"))
         nb.append_page(server_page, Gtk.Label(label="Server"))
         self.add(nb)
 
@@ -737,6 +741,227 @@ class SapperMcpWindow(LinuxMcpWindow):
         if dlg.run() == Gtk.ResponseType.OK:
             entry.set_text(dlg.get_filename())
         dlg.destroy()
+
+    # ------------------------------------------------------------------ #
+    # Sessions page - live monitor for tmux sessions / windows / panes
+    # ------------------------------------------------------------------ #
+
+    def _tmux(self, *args: str) -> tuple[int, str]:
+        """Run a tmux command; return (rc, stdout). Never raises."""
+        import subprocess
+        try:
+            p = subprocess.run(["tmux", *args], capture_output=True,
+                               text=True, timeout=6)
+            return p.returncode, p.stdout
+        except FileNotFoundError:
+            return 127, ""
+        except Exception as exc:
+            return 1, str(exc)
+
+    @staticmethod
+    def _is_sapperish(session: str, window: str = "", command: str = "") -> bool:
+        """Heuristic: fleet workers (w-*), sapper-named sessions/windows,
+        and panes running the sapper CLI or an agent it spawned."""
+        hay = f"{session} {window} {command}".lower()
+        return ("sapper" in hay or window.startswith("w-")
+                or "claude" in hay or "codex" in hay)
+
+    def _build_sessions_page(self) -> Gtk.Widget:
+        import shutil
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_border_width(10)
+
+        if not shutil.which("tmux"):
+            page.pack_start(Gtk.Label(
+                label="tmux is not installed - install it to monitor "
+                      "Sapper sessions (sudo apt install tmux)"), True, True, 0)
+            return page
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        refresh = Gtk.Button(label="Refresh")
+        refresh.connect("clicked", lambda *_: self._refresh_sessions())
+        self.sess_auto = Gtk.Switch(halign=Gtk.Align.START, active=True)
+        self.sess_status = Gtk.Label(xalign=0)
+        self.sess_status.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        top.pack_start(refresh, False, False, 0)
+        top.pack_start(Gtk.Label(label="auto-refresh"), False, False, 0)
+        top.pack_start(self.sess_auto, False, False, 0)
+        top.pack_start(self.sess_status, True, True, 0)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        top.pack_start(sep, False, False, 4)
+        top.pack_start(Gtk.Label(label="peer name:"), False, False, 0)
+        self.peer_name = Gtk.Entry()
+        self.peer_name.set_width_chars(12)
+        self.peer_name.set_placeholder_text("name for --add")
+        top.pack_start(self.peer_name, False, False, 0)
+        auth = Gtk.Button(label="Authorize peer")
+        auth.set_tooltip_text(
+            "run: sapper peers --add <name> --target <selected pane>")
+        auth.connect("clicked", self._on_authorize_peer)
+        top.pack_start(auth, False, False, 0)
+        kill = Gtk.Button(label="Kill selected")
+        kill.connect("clicked", self._on_session_kill)
+        top.pack_start(kill, False, False, 0)
+        page.pack_start(top, False, False, 0)
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(320)
+
+        # left: session/window/pane tree
+        self.sess_store = Gtk.TreeStore(str, str, str, str)  # label level target meta
+        self.sess_tree = Gtk.TreeView(model=self.sess_store)
+        self.sess_tree.set_headers_visible(False)
+        col = Gtk.TreeViewColumn("Session")
+        cell = Gtk.CellRendererText()
+        col.pack_start(cell, True)
+        col.add_attribute(cell, "text", 0)
+        self.sess_tree.append_column(col)
+        self.sess_tree.get_selection().connect(
+            "changed", self._on_session_select)
+        lscroll = Gtk.ScrolledWindow()
+        lscroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        lscroll.add(self.sess_tree)
+        paned.pack1(lscroll, resize=True, shrink=False)
+
+        # right: pane preview
+        rbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.sess_sel_label = Gtk.Label(label="(select a pane)", xalign=0)
+        rbox.pack_start(self.sess_sel_label, False, False, 0)
+        pscroll = Gtk.ScrolledWindow()
+        pscroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.sess_preview = Gtk.TextView(name="sapper-out")
+        self.sess_preview.set_editable(False)
+        self.sess_preview.set_monospace(True)
+        self.sess_preview.set_wrap_mode(Gtk.WrapMode.CHAR)
+        pscroll.add(self.sess_preview)
+        rbox.pack_start(pscroll, True, True, 0)
+        paned.pack2(rbox, resize=True, shrink=False)
+        page.pack_start(paned, True, True, 0)
+
+        self._refresh_sessions()
+        self._sessions_timer = GLib.timeout_add(4000, self._sessions_tick)
+        return page
+
+    def _sessions_tick(self) -> bool:
+        if self.sess_auto.get_active():
+            self._refresh_sessions()
+        return True
+
+    def _refresh_sessions(self) -> None:
+        rc, out = self._tmux("list-sessions", "-F", "#{session_name}")
+        self.sess_store.clear()
+        if rc != 0 or not out.strip():
+            self.sess_status.set_text("no tmux sessions")
+            return
+        sessions = [s for s in out.splitlines() if s.strip()]
+        rc, wins_out = self._tmux(
+            "list-windows", "-a", "-F",
+            "#{session_name}\t#{window_index}\t#{window_name}"
+            "\t#{window_active}")
+        wins: dict[str, list[tuple[str, str, str]]] = {}
+        for line in wins_out.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4:
+                wins.setdefault(parts[0], []).append(
+                    (parts[1], parts[2], parts[3]))
+        rc, panes_out = self._tmux(
+            "list-panes", "-a", "-F",
+            "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}"
+            "\t#{pane_current_command}\t#{pane_active}")
+        panes: dict[str, list[tuple[str, str, str, str]]] = {}
+        for line in panes_out.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 6:
+                panes.setdefault(f"{parts[0]}:{parts[1]}", []).append(
+                    (parts[2], parts[3], parts[4], parts[5]))
+
+        for sess in sessions:
+            sess_wins = wins.get(sess, [])
+            mark = "● " if self._is_sapperish(sess) else ""
+            s_iter = self.sess_store.append(None, [
+                f"{mark}{sess}  ({len(sess_wins)} win)",
+                "session", sess, ""])
+            for widx, wname, wactive in sess_wins:
+                wkey = f"{sess}:{widx}"
+                wmark = "● " if self._is_sapperish(sess, wname) else "  "
+                wact = "*" if wactive == "1" else " "
+                w_iter = self.sess_store.append(s_iter, [
+                    f"{wmark}{wact}{widx}:{wname}",
+                    "window", wkey, ""])
+                for pidx, pid, cmd, pact in panes.get(wkey, []):
+                    pmark = "●" if self._is_sapperish(sess, wname, cmd) else " "
+                    pactm = "*" if pact == "1" else " "
+                    self.sess_store.append(w_iter, [
+                        f"{pmark}{pact}.{pidx} {cmd}",
+                        "pane", f"{wkey}.{pidx}", f"pid {pid}"])
+        self.sess_tree.expand_all()
+        self.sess_status.set_text(
+            f"{len(sessions)} session(s)  "
+            "● = sapper-related (fleet w-*, sapper/agent panes)  "
+            f"updated {time.strftime('%H:%M:%S')}")
+
+    def _selected_session_row(self) -> tuple[str, str, str] | None:
+        model, it = self.sess_tree.get_selection().get_selected()
+        if it is None:
+            return None
+        return model[it][1], model[it][2], model[it][3]  # level, target, meta
+
+    def _on_session_select(self, *_a) -> None:
+        row = self._selected_session_row()
+        if row is None:
+            return
+        level, target, meta = row
+        if level == "pane":
+            rc, out = self._tmux("capture-pane", "-p", "-t", target,
+                                 "-S", "-80")
+            self.sess_sel_label.set_text(f"{target}  {meta}")
+            self.sess_preview.get_buffer().set_text(
+                out if out.strip() else "(empty pane)")
+        else:
+            self.sess_sel_label.set_text(f"{level} {target}")
+            self.sess_preview.get_buffer().set_text(
+                "(select a pane to preview its output)")
+
+    def _on_authorize_peer(self, *_a) -> None:
+        row = self._selected_session_row()
+        name = self.peer_name.get_text().strip()
+        if row is None or row[0] != "pane":
+            self.sess_status.set_text("select a pane first")
+            return
+        if not name:
+            self.sess_status.set_text("enter a peer name first")
+            return
+        argv = (self._argv_prefix()
+                + ["peers", "--add", name, "--target", row[1]])
+        self._start_proc(argv, self._cwd())
+        self.sess_status.set_text(
+            f"authorizing {name} -> {row[1]} (see Sapper tab output)")
+
+    def _on_session_kill(self, *_a) -> None:
+        row = self._selected_session_row()
+        if row is None:
+            self.sess_status.set_text("nothing selected")
+            return
+        level, target, _meta = row
+        verb = {"session": "kill-session", "window": "kill-window",
+                "pane": "kill-pane"}[level]
+        dlg = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"{verb} {target}?")
+        dlg.format_secondary_text(
+            "This kills the tmux " + level +
+            " and everything running in it.")
+        ok = dlg.run() == Gtk.ResponseType.OK
+        dlg.destroy()
+        if not ok:
+            return
+        rc, _ = self._tmux(verb, "-t", target)
+        self.sess_status.set_text(
+            f"{verb} {target}: " + ("done" if rc == 0 else f"rc={rc}"))
+        self._refresh_sessions()
 
 
 def main() -> None:
