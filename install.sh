@@ -104,8 +104,10 @@ fi
 
 if [[ "$mcp_ok" == 1 ]]; then
   echo "installing sappermcp (editable) into the venv ..."
-  if "$VENV/bin/pip" install -q --upgrade pip && \
-     "$VENV/bin/pip" install -q -e "$SCRIPT_DIR"; then
+  # env -u PYTHONPATH: a foreign PYTHONPATH (e.g. another tool's venv) leaks
+  # its site-packages into the venv's pip and breaks the install.
+  if env -u PYTHONPATH "$VENV/bin/python" -m pip install -q --upgrade pip && \
+     env -u PYTHONPATH "$VENV/bin/python" -m pip install -q -e "$SCRIPT_DIR"; then
     for entry in sappermcp sappermcp-gui; do
       if [[ -e "$BIN_DIR/$entry" || -L "$BIN_DIR/$entry" ]]; then
         rm -f "$BIN_DIR/$entry"
