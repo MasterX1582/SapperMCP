@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sappermcp"
+version = "0.1.0"
+description = "SapperMCP - sapper-v2 autonomous pentest toolkit + LinuxMCP system control on one MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastmcp>=2.5",
+    "psutil>=5.9",
+    "mss>=9.0",
+    "Pillow>=10.0",
+]
+
+[project.scripts]
+sappermcp = "sappermcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["sappermcp*", "linuxmcp*"]

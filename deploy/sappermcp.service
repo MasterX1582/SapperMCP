@@ -1,0 +1,18 @@
+[Unit]
+Description=SapperMCP - sapper-v2 toolkit + LinuxMCP system control MCP server
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+Environment=SAPPER_ROOT=%h/SapperMCP
+Environment=PYTHONPATH=%h/SapperMCP
+# Set one of these (better: a systemd EnvironmentFile with 0600 perms):
+# Environment=SAPPERMCP_AUTH_TOKEN=change-me
+# Environment=LINUXMCP_SUDO_PASSWORD=...
+ExecStart=/usr/bin/python3 -m sappermcp --http --host 0.0.0.0 --port 3940
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

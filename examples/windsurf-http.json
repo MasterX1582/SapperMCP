@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "sappermcp": {
+      "serverUrl": "http://127.0.0.1:3940/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SAPPERMCP_AUTH_TOKEN}"
+      }
+    }
+  }
+}

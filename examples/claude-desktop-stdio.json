@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "sappermcp": {
+      "command": "python3",
+      "args": ["-m", "sappermcp", "--stdio"],
+      "env": {
+        "PYTHONPATH": "/path/to/SapperMCP",
+        "SAPPER_ROOT": "/path/to/SapperMCP"
+      }
+    }
+  }
+}
