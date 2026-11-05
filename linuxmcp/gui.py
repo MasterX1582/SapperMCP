@@ -120,6 +120,7 @@ class LinuxMcpWindow(Gtk.Window):
                               xalign=0), 0, 1, 1, 1)
         self.remote_switch = Gtk.Switch(halign=Gtk.Align.START)
         self.remote_switch.connect("notify::active", self._on_remote_toggled)
+        self.remote_switch.connect("notify::active", self._mark_dirty)
         grid.attach(self.remote_switch, 1, 1, 1, 1)
 
         grid.attach(Gtk.Label(label="Auth token", xalign=0), 0, 2, 1, 1)
