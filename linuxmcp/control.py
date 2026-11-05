@@ -20,19 +20,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autostart_server": False,  # start MCP server when daemon starts
 }
 
+# SapperMCP: own namespace so the merged daemon coexists with a stock
+# LinuxMCP install instead of fighting over config.json / the socket.
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME",
-                                 Path.home() / ".config")) / "linuxmcp"
+                                 Path.home() / ".config")) / "sappermcp"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME",
-                                Path.home() / ".local" / "state")) / "linuxmcp"
+                                Path.home() / ".local" / "state")) / "sappermcp"
 LOG_PATH = STATE_DIR / "daemon.log"
 
 
 def socket_path() -> str:
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if runtime:
-        return os.path.join(runtime, "linuxmcp.sock")
-    return f"/tmp/linuxmcp-{os.getuid()}.sock"
+        return os.path.join(runtime, "sappermcp.sock")
+    return f"/tmp/sappermcp-{os.getuid()}.sock"
 
 
 def load_config() -> dict[str, Any]:

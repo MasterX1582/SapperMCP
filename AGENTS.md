@@ -31,7 +31,10 @@ server.
 - `linuxmcp/` — vendored system/desktop toolset; treat as upstream, don't
   edit casually (real upstream: the LinuxMCP repo). Deliberate local edits:
   `daemon.py::_child_argv` spawns `-m sappermcp` (merged server, not
-  linuxmcp-only) and `control.py::DEFAULT_PORT` is 3940.
+  linuxmcp-only), `daemon.py::SUDOERS_FILE` is `99-sappermcp`, and
+  `control.py` uses the `sappermcp` namespace (config dir, state dir,
+  `sappermcp.sock`, port 3940) so it does NOT fight a stock LinuxMCP
+  daemon over settings.
 
 ## Conventions
 - Same contract as LinuxMCP: tools return JSON strings, always `"ok"`.

@@ -366,6 +366,7 @@ class SapperMcpWindow(LinuxMcpWindow):
         super().__init__()
         self.set_title("SapperMCP Control")
         self.set_default_size(820, 740)
+        self.port_spin.set_value(3940)  # merged-server default
 
         style = Gtk.CssProvider()
         style.load_from_data(CSS)

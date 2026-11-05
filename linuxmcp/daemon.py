@@ -32,7 +32,9 @@ from .util import run_proc
 
 MAX_LOG_LINES = 2000
 _MASK = "***"
-SUDOERS_FILE = "/etc/sudoers.d/99-linuxmcp"
+# SapperMCP: own sudoers file so a stock LinuxMCP install's sudo toggle
+# can't remove ours (and vice versa).
+SUDOERS_FILE = "/etc/sudoers.d/99-sappermcp"
 
 
 class LinuxMcpDaemon:
