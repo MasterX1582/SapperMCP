@@ -41,8 +41,8 @@ This fork merges two projects onto one MCP server, keeping both intact:
   **`tests/smoke_test_mcp.py`** (26-check end-to-end suite), plus this
   documentation.
 
-The MCP integration layer was designed and implemented with
-[Devin](https://devin.ai). Upstream sapper-v2 remains © N1nEmAn /
+The MCP integration layer was designed and implemented by MasterX1582.
+Upstream sapper-v2 remains © N1nEmAn /
 VarFusion Lab under MIT (see below); LinuxMCP and the `sappermcp`
 package are MIT as well.
 
@@ -55,6 +55,8 @@ package are MIT as well.
 - Agent-driven commands (`dispatch`, `auto`, `command`, `sweep`, `bench`)
   additionally need an agent CLI on the host (Claude Code / Codex / …) and
   `$SAPPER_MODEL` configured — same requirements as `sapper` itself.
+- The GUI (`sappermcp-gui`) needs `python3-gi` + GTK3 typelibs:
+  `sudo apt install python3-gi gir1.2-gtk-3.0`.
 
 ## Install & run
 
@@ -89,6 +91,24 @@ sappermcp-gui                          # GTK control panel (needs python3-gi):
                                        #   Sapper tab = full CLI builder,
                                        #   Server tab = daemon/server controls
 ```
+
+### Control panel (GUI)
+
+`sappermcp-gui` opens the merged control panel with two tabs:
+
+- **Sapper** (front page) — a builder for the whole `sapper` CLI: set the
+  project dir and `.sapper/` store, pick any of the 33 subcommands, fill in
+  its options in a generated form, and Run it with streamed output. Runs are
+  killable process groups (so `auto`/`bench` agent children die with them),
+  and quick-action buttons give one-click `status` / `graph` / `frontier` /
+  `validate` / `board` / `view` / `report` — the last two write
+  `sapper-graph.html` and `sapper-report.md` next to the store.
+- **Server** — the LinuxMCP daemon panel, unchanged: start/stop the MCP
+  server, port, LAN access, bearer token, autostart, passwordless sudo,
+  activity log, tray icon. Note the supervised server is the **merged**
+  `python -m sappermcp` (all 127 tools) on port 3940.
+
+A desktop launcher is in [deploy/sappermcp.desktop](deploy/sappermcp.desktop).
 
 ### Client configuration
 
