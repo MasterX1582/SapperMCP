@@ -877,6 +877,11 @@ class SapperMcpWindow(LinuxMcpWindow):
         rep.set_tooltip_text("write sapper-report.md next to the store")
         rep.connect("clicked", self._quick_report)
         top.pack_start(rep, False, False, 0)
+        exp = Gtk.Button(label="Export")
+        exp.set_tooltip_text(
+            "export the listed findings as .md, .json or .xml")
+        exp.connect("clicked", self._export_findings)
+        top.pack_start(exp, False, False, 0)
         self.find_status = Gtk.Label(xalign=0)
         top.pack_start(self.find_status, False, False, 0)
         page.pack_start(top, False, False, 0)
@@ -952,6 +957,41 @@ class SapperMcpWindow(LinuxMcpWindow):
             n += 1
         self.find_status.set_text(
             f"{n} finding(s)  ({len(facts)} facts in graph)")
+
+    def _export_findings(self, *_a) -> None:
+        """Export the currently filtered findings to .md/.json/.xml chosen
+        by file extension."""
+        dlg = Gtk.FileChooserDialog(
+            title="Export findings", parent=self,
+            action=Gtk.FileChooserAction.SAVE)
+        dlg.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                        "_Save", Gtk.ResponseType.OK)
+        dlg.set_do_overwrite_confirmation(True)
+        dlg.set_current_name("findings.md")
+        for label, pats in (("Markdown (*.md)", ["*.md"]),
+                            ("JSON (*.json)", ["*.json"]),
+                            ("XML (*.xml)", ["*.xml"])):
+            ff = Gtk.FileFilter()
+            ff.set_name(label)
+            for p in pats:
+                ff.add_pattern(p)
+            dlg.add_filter(ff)
+        path = dlg.run() == Gtk.ResponseType.OK and dlg.get_filename()
+        dlg.destroy()
+        if not path:
+            return
+        fmt = Path(path).suffix.lstrip(".").lower() or "md"
+        try:
+            from .core.export import export_findings
+            facts = sorted(self._find_facts.values(),
+                           key=lambda x: x.get("created_at", ""))
+            Path(path).write_text(export_findings(facts, fmt),
+                                  encoding="utf-8")
+            self.find_status.set_text(
+                f"exported {len(facts)} finding(s) -> {path}")
+            self._try_show_uri(Path(path))
+        except Exception as exc:
+            self.find_status.set_text(f"export failed: {exc}")
 
     def _on_finding_select(self, *_a) -> None:
         model, it = self.find_tree.get_selection().get_selected()
