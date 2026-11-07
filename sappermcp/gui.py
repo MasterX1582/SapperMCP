@@ -383,6 +383,8 @@ class SapperMcpWindow(LinuxMcpWindow):
         nb = Gtk.Notebook()
         nb.append_page(self._build_sapper_page(),
                        Gtk.Label(label="Sapper"))
+        nb.append_page(self._build_findings_page(),
+                       Gtk.Label(label="Findings"))
         nb.append_page(self._build_sessions_page(),
                        Gtk.Label(label="Sessions"))
         nb.append_page(server_page, Gtk.Label(label="Server"))
@@ -844,16 +846,266 @@ class SapperMcpWindow(LinuxMcpWindow):
         self._sessions_timer = GLib.timeout_add(4000, self._sessions_tick)
         return page
 
+    # ------------------------------------------------------------------ #
+    # Findings page - the security issues the graph has collected
+    # ------------------------------------------------------------------ #
+
+    _FIND_KINDS = ("all", "vuln", "cred", "flag", "loot", "host", "service",
+                   "note")
+
+    def _build_findings_page(self) -> Gtk.Widget:
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.set_border_width(10)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        top.pack_start(Gtk.Label(label="Kind:"), False, False, 0)
+        self.find_kind = Gtk.ComboBoxText()
+        for k in self._FIND_KINDS:
+            self.find_kind.append(k, k)
+        self.find_kind.set_active(1)  # vuln first - that's what matters
+        self.find_kind.connect("changed", lambda *_: self._refresh_findings())
+        top.pack_start(self.find_kind, False, False, 0)
+        top.pack_start(Gtk.Label(label="Search:"), False, False, 0)
+        self.find_search = Gtk.Entry()
+        self.find_search.set_placeholder_text("filter text")
+        self.find_search.connect("changed", lambda *_: self._refresh_findings())
+        top.pack_start(self.find_search, True, True, 0)
+        ref = Gtk.Button(label="Refresh")
+        ref.connect("clicked", lambda *_: self._refresh_findings())
+        top.pack_start(ref, False, False, 0)
+        rep = Gtk.Button(label="Report")
+        rep.set_tooltip_text("write sapper-report.md next to the store")
+        rep.connect("clicked", self._quick_report)
+        top.pack_start(rep, False, False, 0)
+        self.find_status = Gtk.Label(xalign=0)
+        top.pack_start(self.find_status, False, False, 0)
+        page.pack_start(top, False, False, 0)
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        paned.set_position(420)
+        # id kind title description data time
+        self.find_store = Gtk.ListStore(str, str, str, str, str, str)
+        self.find_tree = Gtk.TreeView(model=self.find_store)
+        for i, h in enumerate(("id", "kind", "title", "description",
+                               "data", "time")):
+            col = Gtk.TreeViewColumn(h, Gtk.CellRendererText(), text=i)
+            col.set_resizable(True)
+            self.find_tree.append_column(col)
+        self.find_tree.get_selection().connect(
+            "changed", self._on_finding_select)
+        fscroll = Gtk.ScrolledWindow()
+        fscroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        fscroll.add(self.find_tree)
+        paned.pack1(fscroll, resize=True, shrink=False)
+
+        dscroll = Gtk.ScrolledWindow()
+        dscroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.find_detail = Gtk.TextView(name="sapper-out")
+        self.find_detail.set_editable(False)
+        self.find_detail.set_monospace(True)
+        self.find_detail.set_wrap_mode(Gtk.WrapMode.WORD)
+        dscroll.add(self.find_detail)
+        paned.pack2(dscroll, resize=True, shrink=False)
+        page.pack_start(paned, True, True, 0)
+
+        self._find_facts: dict[str, dict] = {}
+        GLib.timeout_add(4000, self._findings_tick)
+        self._refresh_findings()
+        return page
+
+    def _findings_tick(self) -> bool:
+        # only refresh while the tab is visible to keep it cheap
+        self._refresh_findings()
+        return True
+
+    def _refresh_findings(self) -> None:
+        try:
+            from .core.sapperlib import sapper
+            mod = sapper()
+            store = Path(self._cwd()) / self.sap_store.get_text().strip()
+            st = mod.Store(store)
+            st.require()
+            facts = [f for f in st.list_facts() if f.get("id") != "goal"]
+        except Exception as exc:
+            self.find_status.set_text(f"{exc}")
+            return
+        want = self.find_kind.get_active_id() or "all"
+        q = self.find_search.get_text().strip().lower()
+        self.find_store.clear()
+        self._find_facts = {}
+        n = 0
+        for f in sorted(facts, key=lambda x: x.get("created_at", "")):
+            kind = f.get("kind") or "note"
+            if want != "all" and kind != want:
+                continue
+            data = f.get("data") or {}
+            dtxt = " ".join(f"{k}={v}" for k, v in data.items())
+            hay = " ".join(str(x) for x in
+                           (f.get("title"), f.get("description"), dtxt)).lower()
+            if q and q not in hay:
+                continue
+            self._find_facts[f["id"]] = f
+            self.find_store.append([
+                f["id"], kind, f.get("title") or "",
+                (f.get("description") or "")[:120], dtxt[:80],
+                (f.get("created_at") or "")[:19]])
+            n += 1
+        self.find_status.set_text(
+            f"{n} finding(s)  ({len(facts)} facts in graph)")
+
+    def _on_finding_select(self, *_a) -> None:
+        model, it = self.find_tree.get_selection().get_selected()
+        if it is None:
+            return
+        f = self._find_facts.get(model[it][0])
+        if not f:
+            return
+        data = f.get("data") or {}
+        body = [f"{f['id']}  [{f.get('kind') or 'note'}]  {f.get('title') or ''}",
+                "", f.get("description") or ""]
+        if data:
+            body += ["", "data:"] + [f"  {k} = {v}" for k, v in data.items()]
+        if f.get("doc"):
+            body += ["", "doc:", "", f["doc"]]
+        if f.get("created_at"):
+            body += ["", f"created {f['created_at']} by {f.get('creator', '?')}"]
+        self.find_detail.get_buffer().set_text("\n".join(body))
+
     def _sessions_tick(self) -> bool:
         if self.sess_auto.get_active():
             self._refresh_sessions()
         return True
 
+    def _mcp_sessions(self) -> list[dict]:
+        """PTY sessions inside the running MCP server (spawned by
+        background=True runs) - invisible to tmux, so ask the server."""
+        import json
+        import urllib.request
+        try:
+            port = int(self.port_spin.get_value())
+        except (ValueError, TypeError):
+            port = 3940
+        headers = {"Content-Type": "application/json",
+                   "Accept": "application/json, text/event-stream"}
+        tok = self.token_entry.get_text().strip()
+        if tok:
+            headers["Authorization"] = f"Bearer {tok}"
+        url = f"http://127.0.0.1:{port}/mcp"
+
+        def post(payload: dict) -> dict | None:
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode(),
+                headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=4) as r:
+                sid = r.headers.get("mcp-session-id")
+                if sid:
+                    headers["mcp-session-id"] = sid
+                body = r.read().decode("utf-8", "replace")
+            for line in body.splitlines():
+                if line.startswith("data:"):
+                    body = line[5:].strip()
+                    break
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError:
+                return None
+
+        try:
+            post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-03-26",
+                             "capabilities": {},
+                             "clientInfo": {"name": "sappermcp-gui",
+                                            "version": "0.1"}}})
+            resp = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                         "params": {"name": "list_shell_sessions",
+                                    "arguments": {}}})
+        except Exception:
+            return []
+        try:
+            text = "".join(c.get("text", "")
+                           for c in resp["result"]["content"])
+            data = json.loads(text)
+            return data.get("sessions", []) if data.get("ok") else []
+        except Exception:
+            return []
+
+    def _mcp_session_output(self, session_id: str) -> str:
+        import json
+        for _ in range(2):  # read twice in case the first pull is empty
+            out = self._mcp_call("read_session_output",
+                                 {"session_id": session_id,
+                                  "all_output": True})
+            if out:
+                return out.get("new_output", "")
+        return ""
+
+    def _mcp_call(self, tool: str, args: dict) -> dict | None:
+        import json
+        import urllib.request
+        try:
+            port = int(self.port_spin.get_value())
+        except (ValueError, TypeError):
+            port = 3940
+        headers = {"Content-Type": "application/json",
+                   "Accept": "application/json, text/event-stream"}
+        tok = self.token_entry.get_text().strip()
+        if tok:
+            headers["Authorization"] = f"Bearer {tok}"
+        url = f"http://127.0.0.1:{port}/mcp"
+
+        def post(payload: dict) -> dict | None:
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode(),
+                headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=4) as r:
+                sid = r.headers.get("mcp-session-id")
+                if sid:
+                    headers["mcp-session-id"] = sid
+                body = r.read().decode("utf-8", "replace")
+            for line in body.splitlines():
+                if line.startswith("data:"):
+                    body = line[5:].strip()
+                    break
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError:
+                return None
+
+        try:
+            post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-03-26",
+                             "capabilities": {},
+                             "clientInfo": {"name": "sappermcp-gui",
+                                            "version": "0.1"}}})
+            resp = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                         "params": {"name": tool, "arguments": args}})
+            text = "".join(c.get("text", "")
+                           for c in resp["result"]["content"])
+            return json.loads(text)
+        except Exception:
+            return None
+
     def _refresh_sessions(self) -> None:
         rc, out = self._tmux("list-sessions", "-F", "#{session_name}")
         self.sess_store.clear()
+        mcp_sessions = self._mcp_sessions()
+        if mcp_sessions:
+            m_iter = self.sess_store.append(None, [
+                f"MCP server sessions  ({len(mcp_sessions)})", "group", "", ""])
+            for s in mcp_sessions:
+                cmd = (s.get("command") or "(shell)")[:60]
+                running = "●" if s.get("running") else "○"
+                self.sess_store.append(m_iter, [
+                    f"{running} {s.get('session_id', '?')}  {cmd}",
+                    "mcp", s.get("session_id", ""),
+                    "running" if s.get("running") else "exited"])
         if rc != 0 or not out.strip():
-            self.sess_status.set_text("no tmux sessions")
+            if not mcp_sessions:
+                self.sess_status.set_text("no tmux sessions")
+            else:
+                self.sess_status.set_text("no tmux sessions; "
+                                          f"{len(mcp_sessions)} MCP session(s)")
+            self.sess_tree.expand_all()
             return
         sessions = [s for s in out.splitlines() if s.strip()]
         rc, wins_out = self._tmux(
@@ -919,6 +1171,10 @@ class SapperMcpWindow(LinuxMcpWindow):
             self.sess_sel_label.set_text(f"{target}  {meta}")
             self.sess_preview.get_buffer().set_text(
                 out if out.strip() else "(empty pane)")
+        elif level == "mcp":
+            self.sess_sel_label.set_text(f"MCP session {target}  {meta}")
+            self.sess_preview.get_buffer().set_text(
+                self._mcp_session_output(target) or "(no output yet)")
         else:
             self.sess_sel_label.set_text(f"{level} {target}")
             self.sess_preview.get_buffer().set_text(
